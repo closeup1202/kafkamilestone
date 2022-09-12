@@ -1,0 +1,438 @@
+10.47.39.124:9092,10.47.39.125:9092,10.47.39.67:9092
+
+(1) 
+@builder 사용시 컬렉션은 값이 안 들어 감 
+@builder.default 적용해야함
+
+(2)
+java.util.ConcurrentModificationException: null = forEach에서 순회하는 중에 remove가 발생했을 떄 나타나는 오류
+
+- 문제 상황
+:		findCluster.getServers.stream().forEach(findCluster::removeServers);
+
+- 해결 (해당 어노테이션에 orphanRemoval = true 추가 )
+:		@OneToMany(mappedBy = "cluster", cascade = CascadeType.ALL, orphanRemoval = true)
+	  private List<Broker> servers = new ArrayList<>();
+
+----------------
+JPA 에서 자식엔티티의 수정은 insert update update delete 순으로 이어지는데
+
+변경된 자식을 먼저 insert 하고
+기존의 자식을 NULL로 update 한다.
+
+그리고 orphanRemoval 옵션을 true 로 하면 기존 NULL처리된 자식을 DELETE 한다. 
+PK(JoinColumn)값이 NULL로 변한 자식은 고아객체라고 하여 연결된 점이 없는 객체이다. 
+
+orphanRemoval옵션은 바로 이 고아객체를 삭제해주는 역할
+
+출처: https://dev-elop.tistory.com/entry/JPA-orphanRemoval
+	  
+: 	서비스에서 findCluster.getServers().clear();
+
+(3) lazy 로딩 에러 시에는 해당 메소드에 Transactional 붙임
+
+============= client metrics names =========
+request-total
+request-size-avg
+response-total
+response-rate
+network-io-rate
+connection-count
+...
+
+네트워크 트래픽을 모니터링하면 기반구조 변화에 대한 의사결정에 도움이 될 뿐만 아니라,
+과도한 트래픽의 출처를 식별하는 데 도움이 될 것
+
+============================================
+
+(4)
+Transactional과 aop 충돌 (Transactional도 스프링이 제공하는 aop임. 그래서 그냥 컨트롤단에 붙임 )  + @Aspect 클래스를 컴포넌트로 등록
+
+(5) 
+InstanceAlreadyExistsException 발생 -> clusterId X
+
+(6)
+		findCluster = Cluster.builder()
+								.version(cluster.getVersion())
+								.clusterName(cluster.getClusterName())
+								.active(cluster.getActive())
+								.build();
+		
+		builder 사용 하면 @builder.default에 걸려서 modify에서 StringIndexOutOfBoundsException 에러남
+		새로운 set 메소드 추가 builderMethodName
+		
+(7) axios delete 에는 data 보내는 게 따로 없고
+    url pathvaluable로 보내야함
+    
+    
+(8) List<TopicPartitonInfo> partitions 정보
+
+		List<List<TopicPartitionInfo>> topicPartitionsInfo = topicsInfo.parallelStream().map(TopicDescription::partitions).collect(Collectors.toList());
+		  
+    
+(9) topic configs 
+
+					compression.type:gzip
+					leader.replication.throttled.replicas:
+					message.downconversion.enable:true
+					min.insync.replicas:1
+					segment.jitter.ms:0
+					cleanup.policy:delete
+					flush.ms:9223372036854775807
+					follower.replication.throttled.replicas:
+					segment.bytes:1073741824
+					retention.ms:604800000
+					flush.messages:9223372036854775807
+					message.format.version:2.5-IV0
+					file.delete.delay.ms:60000
+					max.compaction.lag.ms:9223372036854775807
+					max.message.bytes:10485760
+					min.compaction.lag.ms:0
+					message.timestamp.type:CreateTime
+					preallocate:false
+					min.cleanable.dirty.ratio:0.5
+					index.interval.bytes:4096
+					unclean.leader.election.enable:false
+					retention.bytes:-1
+					delete.retention.ms:86400000
+					segment.ms:604800000
+					message.timestamp.difference.max.ms:9223372036854775807
+					segment.index.bytes:10485760
+					
+(10) 외부로 전달 불가능한 카프카 내부 객체들이 있다. 이 경우, 새로운 클래스를 만들어서 데이터를 복제한 후에 사용
+
+		dtos.get(0).setFirstReplicas(new NodeDTO(topicValues.get(0).partitions().get(0).replicas().get(0)));
+		
+		log.info("list = {}", list);
+
+		log.info("list0 = {}", list.get(0));
+		log.info("list00 = {}", list.get(0).get(0));
+		log.info("list1 = {}", list.get(1));
+		log.info("list2 = {}", list.get(2));
+		log.info("d = {} ", topicValues.get(0).partitions().get(0).replicas().get(0));
+		
+		dtos.get(0).setFirstReplicas(new NodeDTO(topicValues.get(0).partitions().get(0).replicas().get(0)));
+		
+		for(int i=0; i<dtos.size(); i++) {
+				dtos.get(i).setReplicas(new NodeDTO(replicasList.get(i).get(0)));
+		}
+		
+		
+			List<List<TopicPartitionInfo>> topicPartitionsInfo = topicValues.stream().map(TopicDescription::partitions).collect(Collectors.toList());
+
+			/*
+			IntStream.range(0, topicPartitionsInfo.size())
+					 .forEach(i -> TopicPartitionInfoDTO.builder()
+							 			.partition(topicPartitionsInfo.get(i).get(i).partition())
+							 			.leader(topicPartitionsInfo.get(i).get(i).leader())
+							 			.replicas(topicPartitionsInfo.get(i).get(i).replicas())
+							 			.isr(topicPartitionsInfo.get(i).get(i).isr())
+							 			.build());
+			*/
+			
+			//
+			List<List<Node>> replicasList = new ArrayList<>();
+			
+			topicPartitionsInfo.forEach(p -> replicasList.addAll(p.stream().map(TopicPartitionInfo::replicas).collect(Collectors.toList())));
+			
+			log.info("replicas size : {}", replicasList.size()); 
+			//
+		
+		
+		IntStream.range(0, dtos.size())
+					 .forEach(i -> dtos.get(i).setReplicas(new NodeDTO(replicasList.get(i).get(0))));
+			
+			
+			IntStream.range(0, dtos.size())
+			.forEach(i -> dtos.get(i).setReplicas(new NodeDTO(replicasList.get(i).get(0))));
+			
+(11)
+
+@Autowired
+private KafkaAdmin admin;
+
+...
+
+    AdminClient client = AdminClient.create(admin.getConfig());
+    ...
+    
+    AdminClient client = AdminClient.create(admin.getConfigurationProperties());
+    ...
+    
+    client.close();
+    
+(12)
+
+	토픽 이름 제약 조건
+	#카프카는 토픽 이름 변경을 지원하지 않습니다.
+	
+	빈 문자열 토픽 이름은 지원하지 않는다.
+	토픽 이름은 마침표 하나(.) 또는 마침표 둘(..)로 생성될 수 없다.
+	토픽 이름의 길이는 249자 미만으로 생성되어야 한다.
+	토픽 이름은 영어 대소문자와 숫자 0~9 그리고 마침표(.), 언더바(__), 하이픈(-) 조합으로 생성할 수 있다. 이외의 문자열이 포함된 토픽 이름은 생성 불가하다.
+	카프카 내부 로직 관리 목적으로 사용되는 2개 토픽(__consumer_offsets, __transaction_state)과 동일한 이름으로 생성 불가능하다.
+	카프카 내부적으로 사용하는 로직 때문에 토픽 이름에 마침표(.)와 언더바(_)가 동시에 들어가면 안 된다. 생성은 할 수 있지만 사용 시 이슈가 발생할 수 있기 때문에 마침표(.)와 언더바(_)가 들어간 토픽 이름을 사용하면 WARNING 메시지가 발생한다.
+	이미 생성된 토픽 이름의 마침표(.)를 언더바(_)로 바꾸거나 언더바(_)를 마침표(.)로 바꾼 경우 신규 토픽 이름과 동일하다면 생성할 수 없다. 예를 들어, to.pic 이름의 토픽이 생성되어 있다면 to_pic 이름의 토픽을 생성할 수 없다.
+	
+	참고 : <아파치 카프카 애플리케이션 프로그래밍>, 최원영, 2021, p73. 		
+
+(13)
+			KafkaAdmin admin = factory.getAdmin();
+			
+			KafkaConsumer<String, String> consumer = factory.setConsumer(admin.getConfigurationProperties().get(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG).toString());
+			consumer.subscribe(Arrays.asList(topicName)); 
+			
+			try {
+				while(true) {
+					ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(1000));
+					records.forEach( record -> log.info("Topic: {} | Partition: {} | Offset: {} | Key: {} | value: {}", 
+							record.topic(), record.partition(), record.offset(), record.key(), record.value()));
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			} finally {
+				consumer.close(Duration.ofMillis(50000));
+			}
+			
+(14)
+
+
+			TopicPartitionOffset tpo = new TopicPartitionOffset(topicName, 0);
+			TopicPartitionOffset tpo2 = new TopicPartitionOffset(topicName, 1);
+			log.info("tpo={}", tpo.getOffset());
+			log.info("tpo2={}", tpo2.getOffset());
+			
+(15)
+
+			//
+ListPartitionReassignmentsResult listpr = client.listPartitionReassignments();
+log.info("list pr : {}", listpr);
+
+Collection<TopicPartitionReplica> listRepl = new ArrayList<TopicPartitionReplica>();
+
+TopicPartitionReplica bb = new TopicPartitionReplica(topicName, 0, 0);
+TopicPartitionReplica bb2 = new TopicPartitionReplica(topicName, 1, 1);
+
+listRepl.add(bb);
+listRepl.add(bb2);
+
+DescribeReplicaLogDirsResult replLog = client.describeReplicaLogDirs(listRepl);
+
+//PartitionReassignment reassignment = new PartitionReassignment(replicas, addingReplicas, removingReplicas)
+
+(17) 프로듀서에서 broker 구성이 안 될 때
+
+			Collection<Node> clientNodes = client.describeCluster().nodes().get();
+			
+			List<Node> failedBrokerServer = clientNodes.stream().filter(node -> clientMethods.connectionFailed(node)).collect(Collectors.toList());
+			log.info("failedBrokerServer : {}", failedBrokerServer);
+		
+(18) 
+
+						    									 .isr(String.format("id : %s, host: %s, port : %s, id-2: %s", new NodeDTO(p.isr().toString()).getIsrListStr(), 
+														    											 					  new NodeDTO(p.isr()).getHost(), 
+														    											 					  new NodeDTO(p.isr()).getPort(),
+														    											 					  new NodeDTO(p.isr()).getId()))		
+														    											 					  
+														    											 					  
+(19)
+			for (Node node : brokers) {
+				ConfigResource cr = new ConfigResource(ConfigResource.Type.BROKER, node.idString());
+				DescribeConfigsResult describeConfigsResult = client.describeConfigs(Collections.singleton(cr));
+			}
+		
+
+(20)
+
+				configs.forEach( ( topic, props ) -> {
+					Map<String, String> configsValue = new HashMap<>();
+					props.entries().stream().forEach(entry -> configsValue.put(entry.name(), entry.value()));
+					topicConfigs.put(topic.name(), configsValue);
+				});
+				
+(21) 
+
+KafkaUtils.getConsumerGroupId(); 그룹아이디 가져오기
+
+(22) repl 변경
+
+//factory로 했던 시도.... 실패....
+//				ProducerFactory<String, Object> producerFactory = factory.setProducerFactory(factory.getAdmin().getConfigurationProperties().get(BOOTSTRAP_SERVERS_CONFIG).toString());
+//				
+//				KafkaTemplate<String, Object> kafkaTemplate = new KafkaTemplate<>(producerFactory);
+//				
+//				List<PartitionInfo> partitionInfo = kafkaTemplate.partitionsFor(dto.getTopicName());
+//				
+//				Collection<Node> nodes = client.describeCluster().nodes().get();
+//				
+//				List<Node> node = nodes.stream().collect(Collectors.toList());
+//				
+//				int removeCount = node.size()-dto.getReplication(); 
+//				
+//				if(removeCount != 0) {
+//					for(int i=0; i<removeCount; i++) {
+//						node.remove(node.size()-1);
+//					}
+//				}
+//				
+//				PartitionInfo newPartitionInfo = new PartitionInfo(dto.getTopicName(), 
+//																   partitionInfo.get(VALUE_LIST).partition(), 
+//																   partitionInfo.get(VALUE_LIST).leader(),
+//																   node.toArray(new Node[node.size()]),
+//																   partitionInfo.get(VALUE_LIST).inSyncReplicas()); 
+//				
+//				List<PartitionInfo> np = new ArrayList<PartitionInfo>();
+//				np.add(newPartitionInfo);
+//				
+//				UnaryOperator<PartitionInfo> uop = UnaryOperator.identity();
+//				uop.apply(newPartitionInfo);
+				
+//				log.info("old Partition : {}", partitionInfo);
+//				
+//				partitionInfo.replaceAll(uop);
+
+
+//			replcace 사용 실패
+
+				TopicPartitionInfo newTopicPartitionInfo = new TopicPartitionInfo(currPartitionInfo.get(0).partition(), 
+																				  currPartitionInfo.get(0).leader(),
+																				  node, node);
+				
+				log.info("newTP : {}", newTopicPartitionInfo);
+				
+				List<TopicPartitionInfo> newTopicPI = new ArrayList<TopicPartitionInfo>();
+				newTopicPI.add(newTopicPartitionInfo);
+				
+				log.info("newTP2 : {}", newTopicPI);
+				
+				TopicDescription oldTopicDesc = new TopicDescription(topicName, topic.get(topicName).isInternal(), currPartitionInfo);
+				TopicDescription newTopicDesc = new TopicDescription(topicName, topic.get(topicName).isInternal(), newTopicPI);
+				
+				log.info("newTP3 : {}", newTopicDesc);
+				
+				topic.replace(topicName, newTopicDesc);
+				
+				log.info("newTopic : {}", topic);
+				
+				
+(23) 실패한 consumer
+
+		ConsumerFactory<String, String> consumerFactory = factory.setConsumerFactory(servers, groupName);
+		Consumer<String, String> consumer = consumerFactory.createConsumer(groupName);
+		
+		Map<String, List<PartitionInfo>> consumerTopics = consumer.listTopics();
+		
+		
+		List<Integer> partitionCount = new ArrayList<Integer>();
+        List<String> topicName = new ArrayList<String>();
+        
+		for(Entry<String, List<PartitionInfo>> entry : consumerTopics.entrySet()) {
+			
+			topicName.add(entry.getKey());
+			entry.getValue().forEach(p -> partitionCount.add(p.partition()));
+			
+		};
+
+		Collection<TopicPartition> topicPartitionList = new ArrayList<TopicPartition>();
+		
+		IntStream.range(0, consumerTopics.size()).forEach(i ->  topicPartitionList.add(new TopicPartition(topicName.get(i), partitionCount.get(i))));
+		
+		log.info("tpl : {}", topicPartitionList);
+		
+        Map<TopicPartition, Long> endOffsets = new ConcurrentHashMap<>();
+        
+        topicPartitionList.forEach(topicPartition -> endOffsets.put(topicPartition, consumer.position(topicPartition)));
+        
+        
+        consumer.close();
+        
+        
+        
+        
+ 			Collection<MemberDescription> memberDescriptions = groupsResult.all().get().get(groupName).members();
+			
+			//active member가 없을 수 있다
+			if(!memberDescriptions.isEmpty()) {
+			
+	        List<String> groupTopics = memberDescriptions.stream().flatMap(member -> 
+								        								  member.assignment().topicPartitions().stream()
+								        								    									.map(TopicPartition::topic).collect(Collectors.toList())
+								        								    									.stream())
+								        						  .collect(Collectors.toList());
+			} else {
+				
+				List<PartitionInfo> partitionInfo = consumer.partitionsFor(groupName);
+				//List<TopicPartition> topicPartitions = partitionInfo.stream().map(p -> new TopicPartition(topic, p.partition())).collect(Collectors.toList());
+				
+			}
+			
+			확인용 로그
+			
+		log.info("osl: {}",offsetList);
+		log.info("lal: {}",lagList);
+		log.info("ptl: {}",partitions);
+		
+		log.info("osl size: {}",offsetList.size());
+		log.info("lal size: {}",lagList.size());
+		log.info("ptl size: {}",partitions.size());
+		
+(24) a:{gh_test2-2=Optional[org.apache.kafka.common.errors.ElectionNotNeededException: Leader election not needed for topic partition]
+
+		브로커가 다운 됐을 때 수동으로 리더를 선출하는 거임
+
+		TopicPartition tp = new TopicPartition(topicName, dto.getLeader());
+		
+		Set<TopicPartition> tpset = new HashSet<TopicPartition>();
+		tpset.add(tp);
+		
+		ElectLeadersResult a = client.electLeaders(ElectionType.PREFERRED, tpset, new ElectLeadersOptions());
+		
+		log.info("a:{}", a.partitions().get());
+		
+		
+(25) 까먹은 JPA 복습
+
+ORM은 애플리케이션의 클래스와 SQL 데이터베이스의 테이블 사이의 맵핑 정보를 기술한
+메타데이터를 사용하여, 
+자바 애플리케이션의 객체를 SQL 데이터베이스의 테이블에 자동으로 (또 깨끗하게) 영속화 해주는 기술
+
+장점                    단점
+생산성                 학습비용
+유지보수성
+성능
+밴더 독립성
+
+
+
+
+mappedBy 
+:: cluster 라는 클래스와 연관관계가 있다라는 걸 명시
+:: 객체와 테이블은 서로 독립적인 개체니까
+
+ 외래 키가 있는 곳 == 연관관계의 주인
+ 
+> 연관관계의 주인은 단순히 외래 키를 누가 관리하냐의 문제, 비즈니스상 우위에 있다고 주인으로 정하면 안된다.. 
+예를 들어서 자동차(1)와 바퀴(N)가 있으면, 
+일대다 관계에서 항상 다쪽에 외래 키가 있으므로 외래 키가있는 바퀴(N)를 연관관계의 주인. 
+물론 자동차를 연관관계의 주인으로 정하는 것이 불가능 한것은 아니지만, 
+자동차를 연관관계의 주인으로 정하면 자동차가 관리하지 않는 바퀴(N) 테이블의 외래 키 값이 업데이트 되므로 관리와 유지보수가 어렵고, 
+추가적으로 별도의 업데이트 쿼리가 발생하는 성능 문제도 있음
+
+엔티티에는 가급적 Setter를 사용하지 말자
+Setter가 모두 열려있다. 변경 포인트가 너무 많아서, 유지보수가 어렵다
+Getter와 다르게 Setter는 데이터 호출 시 변경될 수 있기 떄문에
+
+모든 연관관계는 LAZY
+즉시로딩( EAGER )은 예측이 어렵고, 어떤 SQL이 실행될지 추적하기 어렵다. 
+특히 JPQL을 실행할 때 N+1 문제가 자주 발생
+XToOne(OneToOne, ManyToOne) 관계는 기본이 즉시로딩이므로 직접 지연로딩으로 설정해야 한다.
+
+컬렉션은 필드에서 초기화
+컬렉션은 필드에서 바로 초기화 하는 것이 안전
+null 문제에서 안전
+하이버네이트는 엔티티를 영속화 할 때, 컬랙션을 감싸서 하이버네이트가 제공하는 내장 컬렉션으로 변경 
+만약 getOrders() 처럼 임의의 메서드에서 컬력션을 잘못 생성하면 
+하이버네이트 내부 메커니즘에 문제가 발생할 수 있다. 
+따라서 필드레벨에서 생성하는 것이 가장 안전, 코드도 간결함 
+
+-김영한-
